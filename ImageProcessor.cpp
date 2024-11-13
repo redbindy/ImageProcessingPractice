@@ -7,6 +7,7 @@ ImageProcessor::ImageProcessor(const char* path)
 	: mImageWidth(0)
 	, mImageHeight(0)
 	, mImageChannelCount(0)
+	, mDrawMode(EDrawMode::DEFAULT)
 	, mFrequencyTable{ 0, }
 {
 	unsigned char* pPixelData = stbi_load(
@@ -64,7 +65,12 @@ int ImageProcessor::GetImageComponentCount() const
 	return mImageChannelCount;
 }
 
-ID2D1Bitmap* ImageProcessor::CreateBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const
+void ImageProcessor::SetDrawMode(const EDrawMode mode)
+{
+	mDrawMode = mode;
+}
+
+ID2D1Bitmap* ImageProcessor::createBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const
 {
 	ID2D1Bitmap* pBitmap = nullptr;
 
@@ -119,7 +125,29 @@ D2D1_RECT_F ImageProcessor::getD2DRect(const HWND hWnd) const
 
 void ImageProcessor::DrawImage(ID2D1HwndRenderTarget& renderTarget) const
 {
-	ID2D1Bitmap* pBitmap = CreateBitmapHeap(renderTarget);
+	switch (mDrawMode)
+	{
+	case EDrawMode::DEFAULT:
+		drawImageDefault(renderTarget);
+		break;
+
+	case EDrawMode::HISTOGRAM:
+		drawImageWithHistogram(renderTarget);
+		break;
+
+	case EDrawMode::EQUALIZATION:
+		// TODO:
+		break;
+
+	default:
+		ASSERT(false);
+		break;
+	}
+}
+
+void ImageProcessor::drawImageDefault(ID2D1HwndRenderTarget& renderTarget) const
+{
+	ID2D1Bitmap* pBitmap = createBitmapHeap(renderTarget);
 	{
 		const D2D1_RECT_F imageRect = getD2DRect(renderTarget.GetHwnd());
 
@@ -128,9 +156,10 @@ void ImageProcessor::DrawImage(ID2D1HwndRenderTarget& renderTarget) const
 	pBitmap->Release();
 }
 
-void ImageProcessor::DrawImageWithHistogram(ID2D1HwndRenderTarget& renderTarget) const
+
+void ImageProcessor::drawImageWithHistogram(ID2D1HwndRenderTarget& renderTarget) const
 {
-	ID2D1Bitmap* pBitmap = CreateBitmapHeap(renderTarget);
+	ID2D1Bitmap* pBitmap = createBitmapHeap(renderTarget);
 	{
 		D2D1_RECT_F imageRect = getD2DRect(renderTarget.GetHwnd());
 		imageRect.right *= 0.5f;

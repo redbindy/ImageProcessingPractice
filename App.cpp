@@ -122,6 +122,21 @@ LRESULT App::wndProc(const HWND hWnd, const UINT message, const WPARAM wParam, c
 			}
 			break;
 
+		case WM_CHAR:
+			switch (wParam)
+			{
+			case '1':
+				pApp->mImageProcessor.SetDrawMode(EDrawMode::DEFAULT);
+				break;
+			case '2':
+				pApp->mImageProcessor.SetDrawMode(EDrawMode::HISTOGRAM);
+				break;
+			case '3':
+				pApp->mImageProcessor.SetDrawMode(EDrawMode::EQUALIZATION);
+				break;
+			}
+			break;
+
 		case WM_PAINT:
 			pApp->onRender();
 			break;
@@ -198,8 +213,7 @@ void App::onRender()
 	{
 		mpD2DHWndRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
 
-		// mImageProcessor.DrawImage(*mpD2DHWndRenderTarget);
-		mImageProcessor.DrawImageWithHistogram(*mpD2DHWndRenderTarget);
+		mImageProcessor.DrawImage(*mpD2DHWndRenderTarget);
 	}
 	mpD2DHWndRenderTarget->EndDraw();
 }

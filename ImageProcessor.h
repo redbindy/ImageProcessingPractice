@@ -39,6 +39,15 @@ union Pixel
 
 	uint32_t pixel;
 };
+static_assert(sizeof(Pixel) == 4);
+
+enum class EDrawMode
+{
+	DEFAULT, 
+	HISTOGRAM, 
+	EQUALIZATION, 
+	COUNT
+};
 
 class ImageProcessor final
 {
@@ -52,9 +61,9 @@ public:
 	int GetImageHeight() const;
 	int GetImageComponentCount() const;
 
-	ID2D1Bitmap* CreateBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const;
+	void SetDrawMode(const EDrawMode mode);
+
 	void DrawImage(ID2D1HwndRenderTarget& renderTarget) const;
-	void DrawImageWithHistogram(ID2D1HwndRenderTarget& renderTarget) const;
 
 private:
 	std::vector<Pixel> mPixels;
@@ -63,11 +72,15 @@ private:
 	int mImageHeight;
 	int mImageChannelCount;
 
+	EDrawMode mDrawMode;
+
 	FrequencyTable mFrequencyTable;
-	std::vector<float> mPMF;
 
 private:
+	ID2D1Bitmap* createRenderedBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const;
 	D2D1_RECT_F getD2DRect(const HWND renderTarget) const;
+	void drawImageDefault(ID2D1HwndRenderTarget& renderTarget) const;
+	void drawImageWithHistogram(ID2D1HwndRenderTarget& renderTarget) const;
 
 	inline float remapValue(
 		const float value,
