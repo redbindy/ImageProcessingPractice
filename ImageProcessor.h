@@ -3,6 +3,9 @@
 #include <cassert>
 #include <vector>
 #include <cstdint>
+#include <cmath>
+#include <cstring>
+#include <ctime>
 
 #include <d2d1.h>
 #pragma comment(lib, "d2d1.lib")
@@ -18,13 +21,8 @@ enum
 struct FrequencyTable
 {
 	uint32_t redTable[TABLE_SIZE];
-	uint32_t redTotal;
-
 	uint32_t greenTable[TABLE_SIZE];
-	uint32_t greenTotal;
-
 	uint32_t blueTable[TABLE_SIZE];
-	uint32_t blueTotal;
 };
 
 union Pixel
@@ -43,9 +41,9 @@ static_assert(sizeof(Pixel) == 4);
 
 enum class EDrawMode
 {
-	DEFAULT, 
-	HISTOGRAM, 
-	EQUALIZATION, 
+	DEFAULT,
+	HISTOGRAM,
+	EQUALIZATION,
 	COUNT
 };
 
@@ -63,7 +61,7 @@ public:
 
 	void SetDrawMode(const EDrawMode mode);
 
-	void DrawImage(ID2D1HwndRenderTarget& renderTarget) const;
+	void DrawImage(ID2D1HwndRenderTarget& renderTarget);
 
 private:
 	std::vector<Pixel> mPixels;
@@ -80,7 +78,8 @@ private:
 	ID2D1Bitmap* createRenderedBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const;
 	D2D1_RECT_F getD2DRect(const HWND renderTarget) const;
 	void drawImageDefault(ID2D1HwndRenderTarget& renderTarget) const;
-	void drawImageWithHistogram(ID2D1HwndRenderTarget& renderTarget) const;
+	void drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) const;
+	void drawImageEqualization(ID2D1HwndRenderTarget& renderTarget);
 
 	inline float remapValue(
 		const float value,

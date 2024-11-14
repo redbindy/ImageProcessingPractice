@@ -225,7 +225,7 @@ void App::onResize(const int width, const int height)
 		return;
 	}
 
-	D2D1_SIZE_U size = { width, height };
+	D2D1_SIZE_U size = { static_cast<UINT32>(width), static_cast<UINT32>(height) };
 
 	mpD2DHWndRenderTarget->Resize(size);
 }

@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 
-__global__ void Test()
+static __global__ void Test()
 {
 	printf("Test");
 }
