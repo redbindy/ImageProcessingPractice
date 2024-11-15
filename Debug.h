@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <Windows.h>
+#include <cassert>
 
 #if defined(_DEBUG) || defined(DEBUG)
 
@@ -28,6 +29,10 @@
 #define EXPAND(x) x
 #define VA_GENERIC(_1, _2, _3, x, ...) x
 #define ASSERT(...) EXPAND(VA_GENERIC(__VA_ARGS__, ASSERT_WITH_MSG_AND_CODE, ASSERT_WITH_MSG, ASSERT_DEFAULT)(__VA_ARGS__))
+
+#else
+
+#define ASSERT
 
 #endif
 

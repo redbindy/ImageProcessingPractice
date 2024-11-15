@@ -10,6 +10,8 @@ ImageProcessor::ImageProcessor(const char* path)
 	, mDrawMode(EDrawMode::DEFAULT)
 	, mFrequencyTable{ 0, }
 {
+	ASSERT(path != nullptr);
+
 	unsigned char* pPixelData = stbi_load(
 		path,
 		&mImageWidth,
@@ -17,6 +19,7 @@ ImageProcessor::ImageProcessor(const char* path)
 		&mImageChannelCount,
 		0
 	);
+	assert(pPixelData != nullptr);
 	ASSERT(mImageChannelCount >= 3, "Image channel should be 3 >=");
 	{
 		mPixels.reserve(mImageWidth * mImageHeight);
@@ -106,6 +109,8 @@ ID2D1Bitmap* ImageProcessor::createRenderedBitmapHeap(ID2D1HwndRenderTarget& ren
 
 D2D1_RECT_F ImageProcessor::getD2DRect(const HWND hWnd) const
 {
+	assert(hWnd != nullptr);
+
 	RECT rect;
 	GetClientRect(hWnd, &rect);
 
@@ -274,11 +279,13 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 void ImageProcessor::drawImageEqualization(ID2D1HwndRenderTarget& renderTarget)
 {
 	// TODO:
+
 	std::vector<Pixel> backupPixels = mPixels;
 	FrequencyTable backupFreqTable = mFrequencyTable;
 	{
 		clock_t start = clock();
 		{
+#if false /* SERIAL */
 			float redCDF[TABLE_SIZE];
 			float greenCDF[TABLE_SIZE];
 			float blueCDF[TABLE_SIZE];
@@ -298,21 +305,33 @@ void ImageProcessor::drawImageEqualization(ID2D1HwndRenderTarget& renderTarget)
 				blueCDF[i] = blueSum / static_cast<float>(mImageWidth * mImageHeight);
 			}
 
+			memset(&mFrequencyTable, 0, sizeof(mFrequencyTable));
+
 			for (Pixel& pixel : mPixels)
 			{
 				pixel.rgba.r = static_cast<uint8_t>(round(UINT8_MAX * redCDF[pixel.rgba.r]));
-				pixel.rgba.g = static_cast<uint8_t>(round(UINT8_MAX * greenCDF[pixel.rgba.g]));
-				pixel.rgba.b = static_cast<uint8_t>(round(UINT8_MAX * blueCDF[pixel.rgba.b]));
-			}
-
-			memset(&mFrequencyTable, 0, sizeof(mFrequencyTable));
-
-			for (const Pixel& pixel : mPixels)
-			{
 				++mFrequencyTable.redTable[pixel.rgba.r];
+
+				pixel.rgba.g = static_cast<uint8_t>(round(UINT8_MAX * greenCDF[pixel.rgba.g]));
 				++mFrequencyTable.greenTable[pixel.rgba.g];
+
+				pixel.rgba.b = static_cast<uint8_t>(round(UINT8_MAX * blueCDF[pixel.rgba.b]));
 				++mFrequencyTable.blueTable[pixel.rgba.b];
 			}
+#endif /* SERIAL */
+
+#if false /* 3 THREAD */
+			EqualizeHelperCPU(mPixels, mFrequencyTable);
+#endif /* 3 THREAD */
+
+#if true /* CUDA */
+			EqualizeHelperGPU(
+				mPixels.data(),
+				mImageWidth,
+				mImageHeight,
+				&mFrequencyTable
+			);
+#endif /* CUDA */
 		}
 		clock_t end = clock();
 		std::cout << (end - start) / double(CLOCKS_PER_SEC) << std::endl;

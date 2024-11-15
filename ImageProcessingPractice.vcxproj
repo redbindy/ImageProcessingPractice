@@ -134,12 +134,15 @@
     <ClCompile Include="App.cpp" />
     <ClCompile Include="ImageProcessor.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ProcessingHelperCPU.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h" />
     <ClInclude Include="COMHelper.h" />
+    <ClInclude Include="TypeDef.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="ImageProcessor.h" />
+    <ClInclude Include="ProcessingHelperCPU.h" />
     <ClInclude Include="ProcessingHelperGPU.h" />
   </ItemGroup>
   <ItemGroup>

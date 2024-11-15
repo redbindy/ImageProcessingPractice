@@ -218,14 +218,14 @@ void App::onRender()
 	mpD2DHWndRenderTarget->EndDraw();
 }
 
-void App::onResize(const int width, const int height)
+void App::onResize(const UINT width, const UINT height)
 {
 	if (mpD2DHWndRenderTarget == nullptr)
 	{
 		return;
 	}
 
-	D2D1_SIZE_U size = { static_cast<UINT32>(width), static_cast<UINT32>(height) };
+	D2D1_SIZE_U size = { width, height };
 
 	mpD2DHWndRenderTarget->Resize(size);
 }
