@@ -38,5 +38,5 @@ private:
 	HRESULT createDeviceResources();
 
 	void onRender();
-	void onResize(const int width, const int height);
+	void onResize(const UINT width, const UINT height);
 };

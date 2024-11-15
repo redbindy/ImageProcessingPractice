@@ -218,7 +218,7 @@ void App::onRender()
 	mpD2DHWndRenderTarget->EndDraw();
 }
 
-void App::onResize(const int width, const int height)
+void App::onResize(const UINT width, const UINT height)
 {
 	if (mpD2DHWndRenderTarget == nullptr)
 	{
