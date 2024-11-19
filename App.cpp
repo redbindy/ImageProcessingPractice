@@ -128,11 +128,24 @@ LRESULT App::wndProc(const HWND hWnd, const UINT message, const WPARAM wParam, c
 			case '1':
 				pApp->mImageProcessor.SetDrawMode(EDrawMode::DEFAULT);
 				break;
+
 			case '2':
 				pApp->mImageProcessor.SetDrawMode(EDrawMode::HISTOGRAM);
 				break;
+
 			case '3':
 				pApp->mImageProcessor.SetDrawMode(EDrawMode::EQUALIZATION);
+				break;
+
+			case '4':
+				pApp->mImageProcessor.SetDrawMode(EDrawMode::MATCHING);
+				break;
+
+			case '5':
+				pApp->mImageProcessor.SetDrawMode(EDrawMode::GAMMA);
+				break;
+
+			default:
 				break;
 			}
 			break;

@@ -2,9 +2,14 @@
 
 #include "TypeDef.h"
 
-void EqualizeHelperGPU(
-	Pixel* pPixels, 
-	const int imageWidth, 
-	const int imageHeight, 
-	FrequencyTable* pFrequencyTable
-);
+struct ImageDTOForGPU
+{
+	Pixel* pPixels;
+	const int width;
+	const int height;
+	FrequencyTable* pFrequencyTable;
+};
+
+void EqualizeHelperGPU(ImageDTOForGPU image);
+
+void Match();

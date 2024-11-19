@@ -1,11 +1,11 @@
 #include "ProcessingHelperCPU.h"
 
-void EqualizeHelperCPU(std::vector<Pixel>& pixels, FrequencyTable& frequencyTable)
+void EqualizeHelperCPU(Image& outImage)
 {
 	EqualizeArgs argsArr[EHandleColor::COUNT] = {
-		{ pixels.data(), static_cast<const int>(pixels.size()), &frequencyTable, EHandleColor::RED},
-		{ pixels.data(), static_cast<const int>(pixels.size()), &frequencyTable, EHandleColor::GREEN },
-		{ pixels.data(), static_cast<const int>(pixels.size()), &frequencyTable, EHandleColor::BLUE }
+		{ outImage.Pixels.data(), static_cast<const int>(outImage.Pixels.size()), &outImage.FrequencyTable, EHandleColor::RED},
+		{ outImage.Pixels.data(), static_cast<const int>(outImage.Pixels.size()), &outImage.FrequencyTable, EHandleColor::GREEN },
+		{ outImage.Pixels.data(), static_cast<const int>(outImage.Pixels.size()), &outImage.FrequencyTable, EHandleColor::BLUE }
 	};
 
 	HANDLE handles[EHandleColor::COUNT];

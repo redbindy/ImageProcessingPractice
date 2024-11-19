@@ -132,6 +132,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp" />
+    <ClCompile Include="Image.cpp" />
     <ClCompile Include="ImageProcessor.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="ProcessingHelperCPU.cpp" />
@@ -139,6 +140,8 @@
   <ItemGroup>
     <ClInclude Include="App.h" />
     <ClInclude Include="COMHelper.h" />
+    <ClInclude Include="Image.h" />
+    <ClInclude Include="MathHelper.h" />
     <ClInclude Include="TypeDef.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="ImageProcessor.h" />

@@ -1,66 +1,10 @@
 #include "ImageProcessor.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
 ImageProcessor::ImageProcessor(const char* path)
-	: mImageWidth(0)
-	, mImageHeight(0)
-	, mImageChannelCount(0)
+	: mImage(path)
 	, mDrawMode(EDrawMode::DEFAULT)
-	, mFrequencyTable{ 0, }
 {
-	ASSERT(path != nullptr);
 
-	unsigned char* pPixelData = stbi_load(
-		path,
-		&mImageWidth,
-		&mImageHeight,
-		&mImageChannelCount,
-		0
-	);
-	assert(pPixelData != nullptr);
-	ASSERT(mImageChannelCount >= 3, "Image channel should be 3 >=");
-	{
-		mPixels.reserve(mImageWidth * mImageHeight);
-
-		for (int y = 0; y < mImageHeight; ++y)
-		{
-			for (int x = 0; x < mImageWidth; ++x)
-			{
-				const int index = toIndex(x, y, mImageWidth) * mImageChannelCount;
-
-				Pixel pixel;
-
-				pixel.rgba.r = pPixelData[index];
-				pixel.rgba.g = pPixelData[index + 1];
-				pixel.rgba.b = pPixelData[index + 2];
-				pixel.rgba.a = UINT8_MAX;
-
-				++mFrequencyTable.redTable[pixel.rgba.r];
-				++mFrequencyTable.greenTable[pixel.rgba.g];
-				++mFrequencyTable.blueTable[pixel.rgba.b];
-
-				mPixels.push_back(pixel);
-			}
-		}
-	}
-	stbi_image_free(pPixelData);
-}
-
-int ImageProcessor::GetImageWidth() const
-{
-	return mImageWidth;
-}
-
-int ImageProcessor::GetImageHeight() const
-{
-	return mImageHeight;
-}
-
-int ImageProcessor::GetImageComponentCount() const
-{
-	return mImageChannelCount;
 }
 
 void ImageProcessor::SetDrawMode(const EDrawMode mode)
@@ -73,8 +17,8 @@ ID2D1Bitmap* ImageProcessor::createRenderedBitmapHeap(ID2D1HwndRenderTarget& ren
 	ID2D1Bitmap* pBitmap = nullptr;
 
 	const D2D1_SIZE_U size = {
-		static_cast<UINT32>(mImageWidth),
-		static_cast<UINT32>(mImageHeight)
+		static_cast<UINT32>(mImage.Width),
+		static_cast<UINT32>(mImage.Height)
 	};
 
 	const D2D1_PIXEL_FORMAT pixelFormat = D2D1::PixelFormat(
@@ -100,7 +44,7 @@ ID2D1Bitmap* ImageProcessor::createRenderedBitmapHeap(ID2D1HwndRenderTarget& ren
 	assert(pBitmap != nullptr);
 	pBitmap->CopyFromMemory(
 		&box,
-		mPixels.data(),
+		mImage.Pixels.data(),
 		sizeof(Pixel) * size.width
 	);
 
@@ -125,24 +69,33 @@ D2D1_RECT_F ImageProcessor::getD2DRect(const HWND hWnd) const
 
 void ImageProcessor::DrawImage(ID2D1HwndRenderTarget& renderTarget)
 {
-	switch (mDrawMode)
+	clock_t start = clock();
 	{
-	case EDrawMode::DEFAULT:
-		drawImageDefault(renderTarget);
-		break;
+		switch (mDrawMode)
+		{
+		case EDrawMode::DEFAULT:
+			drawImageDefault(renderTarget);
+			break;
 
-	case EDrawMode::HISTOGRAM:
-		drawImageHistogram(renderTarget);
-		break;
+		case EDrawMode::HISTOGRAM:
+			drawImageHistogram(renderTarget);
+			break;
 
-	case EDrawMode::EQUALIZATION:
-		drawImageEqualization(renderTarget);
-		break;
+		case EDrawMode::EQUALIZATION:
+			drawImageEqualization(renderTarget);
+			break;
 
-	default:
-		ASSERT(false);
-		break;
+		case EDrawMode::MATCHING:
+			drawImageMatching(renderTarget);
+			break;
+
+		default:
+			ASSERT(false);
+			break;
+		}
 	}
+	clock_t end = clock();
+	std::cout << (end - start) / double(CLOCKS_PER_SEC) << std::endl;
 }
 
 void ImageProcessor::drawImageDefault(ID2D1HwndRenderTarget& renderTarget) const
@@ -192,19 +145,19 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 
 			for (int i = 0; i < TABLE_SIZE; ++i)
 			{
-				const uint32_t r = mFrequencyTable.redTable[i];
+				const uint32_t r = mImage.FrequencyTable.redTable[i];
 				if (r > maxFreq)
 				{
 					maxFreq = r;
 				}
 
-				const uint32_t g = mFrequencyTable.greenTable[i];
+				const uint32_t g = mImage.FrequencyTable.greenTable[i];
 				if (g > maxFreq)
 				{
 					maxFreq = g;
 				}
 
-				const uint32_t b = mFrequencyTable.blueTable[i];
+				const uint32_t b = mImage.FrequencyTable.blueTable[i];
 				if (b > maxFreq)
 				{
 					maxFreq = b;
@@ -223,8 +176,8 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 			{
 				D2D1_POINT_2F redTailPoint = { x, redBottom };
 
-				const float red = remapValue(
-					static_cast<float>(mFrequencyTable.redTable[i]),
+				const float red = RemapValue(
+					static_cast<float>(mImage.FrequencyTable.redTable[i]),
 					0, static_cast<float>(maxFreq),
 					0, static_cast<float>(histHeight)
 				);
@@ -238,8 +191,8 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 
 				D2D1_POINT_2F greenTailPoint = { x, greenBottom };
 
-				const float green = remapValue(
-					static_cast<float>(mFrequencyTable.greenTable[i]),
+				const float green = RemapValue(
+					static_cast<float>(mImage.FrequencyTable.greenTable[i]),
 					0, static_cast<float>(maxFreq),
 					0, static_cast<float>(histHeight)
 				);
@@ -253,8 +206,8 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 
 				D2D1_POINT_2F blueTailPoint = { x, blueBottom };
 
-				const float blue = remapValue(
-					static_cast<float>(mFrequencyTable.blueTable[i]),
+				const float blue = RemapValue(
+					static_cast<float>(mImage.FrequencyTable.blueTable[i]),
 					0, static_cast<float>(maxFreq),
 					0, static_cast<float>(histHeight)
 				);
@@ -278,66 +231,166 @@ void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) con
 
 void ImageProcessor::drawImageEqualization(ID2D1HwndRenderTarget& renderTarget)
 {
-	// TODO:
-
-	std::vector<Pixel> backupPixels = mPixels;
-	FrequencyTable backupFreqTable = mFrequencyTable;
+	std::vector<Pixel> backupPixels = mImage.Pixels;
+	FrequencyTable backupFreqTable = mImage.FrequencyTable;
 	{
-		clock_t start = clock();
-		{
 #if false /* SERIAL */
-			float redCDF[TABLE_SIZE];
-			float greenCDF[TABLE_SIZE];
-			float blueCDF[TABLE_SIZE];
+		float redCDF[TABLE_SIZE];
+		float greenCDF[TABLE_SIZE];
+		float blueCDF[TABLE_SIZE];
 
-			uint32_t redSum = 0;
-			uint32_t greenSum = 0;
-			uint32_t blueSum = 0;
-			for (int i = 0; i < TABLE_SIZE; ++i)
-			{
-				redSum += mFrequencyTable.redTable[i];
-				redCDF[i] = redSum / static_cast<float>(mImageWidth * mImageHeight);
+		uint32_t redSum = 0;
+		uint32_t greenSum = 0;
+		uint32_t blueSum = 0;
+		for (int i = 0; i < TABLE_SIZE; ++i)
+		{
+			redSum += mFrequencyTable.redTable[i];
+			redCDF[i] = redSum / static_cast<float>(mImageWidth * mImageHeight);
 
-				greenSum += mFrequencyTable.greenTable[i];
-				greenCDF[i] = greenSum / static_cast<float>(mImageWidth * mImageHeight);
+			greenSum += mFrequencyTable.greenTable[i];
+			greenCDF[i] = greenSum / static_cast<float>(mImageWidth * mImageHeight);
 
-				blueSum += mFrequencyTable.blueTable[i];
-				blueCDF[i] = blueSum / static_cast<float>(mImageWidth * mImageHeight);
-			}
+			blueSum += mFrequencyTable.blueTable[i];
+			blueCDF[i] = blueSum / static_cast<float>(mImageWidth * mImageHeight);
+		}
 
-			memset(&mFrequencyTable, 0, sizeof(mFrequencyTable));
+		memset(&mFrequencyTable, 0, sizeof(mFrequencyTable));
 
-			for (Pixel& pixel : mPixels)
-			{
-				pixel.rgba.r = static_cast<uint8_t>(round(UINT8_MAX * redCDF[pixel.rgba.r]));
-				++mFrequencyTable.redTable[pixel.rgba.r];
+		for (Pixel& pixel : mPixels)
+		{
+			pixel.rgba.r = static_cast<uint8_t>(round(UINT8_MAX * redCDF[pixel.rgba.r]));
+			++mFrequencyTable.redTable[pixel.rgba.r];
 
-				pixel.rgba.g = static_cast<uint8_t>(round(UINT8_MAX * greenCDF[pixel.rgba.g]));
-				++mFrequencyTable.greenTable[pixel.rgba.g];
+			pixel.rgba.g = static_cast<uint8_t>(round(UINT8_MAX * greenCDF[pixel.rgba.g]));
+			++mFrequencyTable.greenTable[pixel.rgba.g];
 
-				pixel.rgba.b = static_cast<uint8_t>(round(UINT8_MAX * blueCDF[pixel.rgba.b]));
-				++mFrequencyTable.blueTable[pixel.rgba.b];
-			}
+			pixel.rgba.b = static_cast<uint8_t>(round(UINT8_MAX * blueCDF[pixel.rgba.b]));
+			++mFrequencyTable.blueTable[pixel.rgba.b];
+		}
 #endif /* SERIAL */
 
 #if false /* 3 THREAD */
-			EqualizeHelperCPU(mPixels, mFrequencyTable);
+		EqualizeHelperCPU(mPixels, mFrequencyTable);
 #endif /* 3 THREAD */
 
 #if true /* CUDA */
-			EqualizeHelperGPU(
-				mPixels.data(),
-				mImageWidth,
-				mImageHeight,
-				&mFrequencyTable
-			);
+
+		ImageDTOForGPU imageDTO = {
+			mImage.Pixels.data(),
+			mImage.Width,
+			mImage.Height,
+			&(mImage.FrequencyTable)
+		};
+
+		EqualizeHelperGPU(imageDTO);
 #endif /* CUDA */
-		}
-		clock_t end = clock();
-		std::cout << (end - start) / double(CLOCKS_PER_SEC) << std::endl;
 
 		drawImageHistogram(renderTarget);
 	}
-	mFrequencyTable = backupFreqTable;
-	backupPixels.swap(mPixels);
+	mImage.FrequencyTable = backupFreqTable;
+	backupPixels.swap(mImage.Pixels);
+}
+
+void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
+{
+	Image image("xenoblade2-01.jpg");
+
+	std::vector<Pixel> backupPixels = mImage.Pixels;
+	FrequencyTable backupFreqTable = mImage.FrequencyTable;
+	{
+		ImageDTOForGPU srcImageDTO = {
+			mImage.Pixels.data(),
+			mImage.Width,
+			mImage.Height,
+			&(mImage.FrequencyTable)
+		};
+
+		EqualizeHelperGPU(srcImageDTO);
+
+		ImageDTOForGPU refImageDTO = {
+			image.Pixels.data(),
+			image.Width,
+			image.Height,
+			&(image.FrequencyTable)
+		};
+
+		EqualizeHelperGPU(refImageDTO);
+
+		FrequencyTable lookup = { 0, };
+		for (int i = 0; i < TABLE_SIZE; ++i)
+		{
+			int k;
+			for (k = 0; k < TABLE_SIZE; ++k)
+			{
+				if (image.FrequencyTable.redTable[k] > mImage.FrequencyTable.redTable[i])
+				{
+					break;
+				}
+			}
+
+			lookup.redTable[i] = k;
+
+			for (k = 0; k < TABLE_SIZE; ++k)
+			{
+				if (image.FrequencyTable.greenTable[k] > mImage.FrequencyTable.greenTable[i])
+				{
+					break;
+				}
+			}
+
+			lookup.greenTable[i] = k;
+
+			for (k = 0; k < TABLE_SIZE; ++k)
+			{
+				if (image.FrequencyTable.blueTable[k] > mImage.FrequencyTable.blueTable[i])
+				{
+					break;
+				}
+			}
+
+			lookup.blueTable[i] = k;
+		}
+
+		image.Pixels.clear();
+		memset(&(image.FrequencyTable), 0, sizeof(FrequencyTable));
+		for (int i = 0; i < mImage.Pixels.size(); ++i)
+		{
+			Pixel newPixel;
+			newPixel.rgba.r = lookup.redTable[mImage.Pixels[i].rgba.r];
+			++image.FrequencyTable.redTable[newPixel.rgba.r];
+
+			newPixel.rgba.g = lookup.greenTable[mImage.Pixels[i].rgba.g];
+			++image.FrequencyTable.greenTable[newPixel.rgba.g];
+
+			newPixel.rgba.b = lookup.blueTable[mImage.Pixels[i].rgba.b];
+			++image.FrequencyTable.blueTable[newPixel.rgba.b];
+
+			newPixel.rgba.a = UINT8_MAX;
+
+			image.Pixels.push_back(newPixel);
+		}
+
+		mImage.Pixels.swap(image.Pixels);
+		mImage.FrequencyTable = image.FrequencyTable;
+
+		drawImageHistogram(renderTarget);
+	}
+	mImage.Pixels.swap(backupPixels);
+	mImage.FrequencyTable = backupFreqTable;
+}
+
+void ImageProcessor::drawImageGamma(ID2D1HwndRenderTarget& renderTarget)
+{
+	std::vector<Pixel> backupPixels = mImage.Pixels;
+	FrequencyTable backupFreqTable = mImage.FrequencyTable;
+	{
+		constexpr float GAMMA = 2.5;
+
+		for (Pixel& pixel : mImage.Pixels)
+		{
+
+		}
+	}
+	mImage.Pixels.swap(backupPixels);
+	mImage.FrequencyTable = backupFreqTable;
 }

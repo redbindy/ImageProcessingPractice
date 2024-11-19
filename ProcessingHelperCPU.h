@@ -5,8 +5,9 @@
 
 #include "Debug.h"
 #include "TypeDef.h"
+#include "Image.h"
 
-void EqualizeHelperCPU(std::vector<Pixel>& pixels, FrequencyTable& frequencyTable);
+void EqualizeHelperCPU(Image& outImage);
 
 struct EqualizeArgs
 {

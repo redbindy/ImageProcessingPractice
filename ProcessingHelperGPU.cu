@@ -5,28 +5,23 @@
 
 #include <stdio.h>
 
-__global__ void EqualizeHelperComputePixel(
-	Pixel* pPixelsGPU,
-	const int imageWidth,
-	const int imageHeight,
-	FrequencyTable* pFrequencyTableGPU
-)
+__global__ void EqualizePixels(ImageDTOForGPU imageGPU)
 {
-	const int pixelCount = imageWidth * imageHeight;
-
+	const int pixelCount = imageGPU.width * imageGPU.height;
+	
 	const unsigned int col = (blockDim.x * blockIdx.x) + threadIdx.x;
-	if (col >= imageWidth)
+	if (col >= imageGPU.width)
 	{
 		return;
 	}
 
 	const unsigned int row = (blockDim.y * blockIdx.y) + threadIdx.y;
-	if (row >= imageHeight)
+	if (row >= imageGPU.height)
 	{
 		return;
 	}
 
-	const unsigned int index = row * imageWidth + col;
+	const unsigned int index = row * imageGPU.width + col;
 
 	__shared__ float cdf[TABLE_SIZE];
 
@@ -39,19 +34,19 @@ __global__ void EqualizeHelperComputePixel(
 			{
 			case EHandleColor::RED:
 				{
-					sum += pFrequencyTableGPU->redTable[i];
+					sum += imageGPU.pFrequencyTable->redTable[i];
 				}
 				break;
 
 			case EHandleColor::GREEN:
 				{
-					sum += pFrequencyTableGPU->greenTable[i];
+					sum += imageGPU.pFrequencyTable->greenTable[i];
 				}
 				break;
 
 			case EHandleColor::BLUE:
 				{
-					sum += pFrequencyTableGPU->blueTable[i];
+					sum += imageGPU.pFrequencyTable->blueTable[i];
 				}
 				break;
 
@@ -66,7 +61,7 @@ __global__ void EqualizeHelperComputePixel(
 
 	__syncthreads();
 
-	Pixel* pPixel = pPixelsGPU + index;
+	Pixel* pPixel = imageGPU.pPixels + index;
 	switch (blockIdx.z)
 	{
 	case EHandleColor::RED:
@@ -93,47 +88,42 @@ __global__ void EqualizeHelperComputePixel(
 	}
 }
 
-__global__ void EqualizeHelperGetFrequencyTable(
-	Pixel* pPixelsGPU,
-	const int imageWidth,
-	const int imageHeight,
-	FrequencyTable* pFrequencyTableGPU
-)
+__global__ void CalculateFrequencyTable(ImageDTOForGPU imageGPU)
 {
-	const int pixelCount = imageWidth * imageHeight;
+	const int pixelCount = imageGPU.width * imageGPU.height;
 
 	const unsigned int col = (blockDim.x * blockIdx.x) + threadIdx.x;
-	if (col >= imageWidth)
+	if (col >= imageGPU.width)
 	{
 		return;
 	}
 
 	const unsigned int row = (blockDim.y * blockIdx.y) + threadIdx.y;
-	if (row >= imageHeight)
+	if (row >= imageGPU.height)
 	{
 		return;
 	}
 
-	const unsigned int index = row * imageWidth + col;
+	const unsigned int index = row * imageGPU.width + col;
 
-	Pixel* pPixel = pPixelsGPU + index;
+	Pixel* pPixel = imageGPU.pPixels + index;
 	switch (blockIdx.z)
 	{
 	case EHandleColor::RED:
 		{
-			atomicAdd(pFrequencyTableGPU->redTable + pPixel->rgba.r, 1);
+			atomicAdd(imageGPU.pFrequencyTable->redTable + pPixel->rgba.r, 1);
 		}
 		break;
 
 	case EHandleColor::GREEN:
 		{
-			atomicAdd(pFrequencyTableGPU->greenTable + pPixel->rgba.g, 1);
+			atomicAdd(imageGPU.pFrequencyTable->greenTable + pPixel->rgba.g, 1);
 		}
 		break;
 
 	case EHandleColor::BLUE:
 		{
-			atomicAdd(pFrequencyTableGPU->blueTable + pPixel->rgba.b, 1);
+			atomicAdd(imageGPU.pFrequencyTable->blueTable + pPixel->rgba.b, 1);
 		}
 		break;
 
@@ -143,26 +133,20 @@ __global__ void EqualizeHelperGetFrequencyTable(
 	}
 }
 
-void EqualizeHelperGPU(
-	Pixel* pPixels,
-	const int imageWidth,
-	const int imageHeight,
-	FrequencyTable* pFrequencyTable
-)
+void EqualizeHelperGPU(ImageDTOForGPU image)
 {
-	const int pixelCount = imageWidth * imageHeight;
+	const int pixelCount = image.width * image.height;
 
-	Pixel* pPixelsGPU = nullptr;
-	FrequencyTable* pFrequencyTableGPU = nullptr;
-
-	cudaError_t errorCode = cudaMalloc(&pPixelsGPU, sizeof(Pixel) * pixelCount);
+	ImageDTOForGPU imageGPU = { nullptr, image.width, image.height, nullptr };
+	
+	cudaError_t errorCode = cudaMalloc(&(imageGPU.pPixels), sizeof(Pixel) * pixelCount);
 	if (errorCode != cudaSuccess)
 	{
 		printf("%s - %s\n", cudaGetErrorName(errorCode), cudaGetErrorString(errorCode));
 		return;
 	}
 
-	errorCode = cudaMalloc(&pFrequencyTableGPU, sizeof(FrequencyTable));
+	errorCode = cudaMalloc(&(imageGPU.pFrequencyTable), sizeof(FrequencyTable));
 	if (errorCode != cudaSuccess)
 	{
 		printf("%s - %s\n", cudaGetErrorName(errorCode), cudaGetErrorString(errorCode));
@@ -172,23 +156,24 @@ void EqualizeHelperGPU(
 	{
 		dim3 blockDim = { 32, 32, 1 };
 		dim3 gridDim = {
-			(unsigned int)ceil(imageWidth / (float)blockDim.x),
-			(unsigned int)ceil(imageHeight / (float)blockDim.y),
+			(unsigned int)ceil(imageGPU.width / (float)blockDim.x),
+			(unsigned int)ceil(imageGPU.height / (float)blockDim.y),
 			EHandleColor::COUNT
 		};
 
-		cudaMemcpy(pPixelsGPU, pPixels, pixelCount * sizeof(Pixel), cudaMemcpyHostToDevice);
-		cudaMemcpy(pFrequencyTableGPU, pFrequencyTable, sizeof(FrequencyTable), cudaMemcpyHostToDevice);
+		cudaMemcpy(imageGPU.pPixels, image.pPixels, pixelCount * sizeof(Pixel), cudaMemcpyHostToDevice);
+		cudaMemcpy(imageGPU.pFrequencyTable, image.pFrequencyTable, sizeof(FrequencyTable), cudaMemcpyHostToDevice);
 		{
-			EqualizeHelperComputePixel << <gridDim, blockDim >> > (pPixelsGPU, imageWidth, imageHeight, pFrequencyTableGPU);
+			EqualizePixels << <gridDim, blockDim >> > (imageGPU);
 		}
-		cudaMemcpy(pPixels, pPixelsGPU, pixelCount * sizeof(Pixel), cudaMemcpyDeviceToHost);
-		cudaMemset(pFrequencyTableGPU, 0, sizeof(FrequencyTable));
+		cudaMemcpy(image.pPixels, imageGPU.pFrequencyTable, pixelCount * sizeof(Pixel), cudaMemcpyDeviceToHost);
+
+		cudaMemset(imageGPU.pFrequencyTable, 0, sizeof(FrequencyTable));
 		{
-			EqualizeHelperGetFrequencyTable << <gridDim, blockDim >> > (pPixelsGPU, imageWidth, imageHeight, pFrequencyTableGPU);
+			CalculateFrequencyTable << <gridDim, blockDim >> > (imageGPU);
 		}
-		cudaMemcpy(pFrequencyTable, pFrequencyTableGPU, sizeof(FrequencyTable), cudaMemcpyDeviceToHost);
+		cudaMemcpy(image.pFrequencyTable, imageGPU.pFrequencyTable, sizeof(FrequencyTable), cudaMemcpyDeviceToHost);
 	}
-	cudaFree(pPixelsGPU);
-	cudaFree(pFrequencyTableGPU);
+	cudaFree(imageGPU.pPixels);
+	cudaFree(imageGPU.pFrequencyTable);
 }
