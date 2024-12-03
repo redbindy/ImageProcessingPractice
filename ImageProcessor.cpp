@@ -298,6 +298,7 @@ void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
 	std::vector<Pixel> backupPixels = mImage.Pixels;
 	FrequencyTable backupFreqTable = mImage.FrequencyTable;
 	{
+#if true /* SERIAL */
 		ImageDTOForGPU srcImageDTO = {
 			mImage.Pixels.data(),
 			mImage.Width,
@@ -372,6 +373,26 @@ void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
 
 		mImage.Pixels.swap(image.Pixels);
 		mImage.FrequencyTable = image.FrequencyTable;
+#endif /* SERIAL */
+
+#if false /* CUDA */ // 만들긴 했는데 더 느림...
+		ImageDTOForGPU srcImageDTO = {
+			mImage.Pixels.data(),
+			mImage.Width,
+			mImage.Height,
+			&(mImage.FrequencyTable)
+		};
+
+
+		ImageDTOForGPU refImageDTO = {
+			image.Pixels.data(),
+			image.Width,
+			image.Height,
+			&(image.FrequencyTable)
+		};
+
+		MatchHelperGPU(srcImageDTO, srcImageDTO, refImageDTO);
+#endif /* CUDA */
 
 		drawImageHistogram(renderTarget);
 	}

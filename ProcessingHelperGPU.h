@@ -12,4 +12,4 @@ struct ImageDTOForGPU
 
 void EqualizeHelperGPU(ImageDTOForGPU image);
 
-void Match();
+void MatchHelperGPU(ImageDTOForGPU outImage, ImageDTOForGPU srcImage, ImageDTOForGPU refImage);
