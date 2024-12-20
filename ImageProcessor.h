@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <immintrin.h>
 
 #include <d2d1.h>
 #pragma comment(lib, "d2d1.lib")

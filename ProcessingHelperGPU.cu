@@ -28,10 +28,11 @@ __global__ void EqualizePixels(ImageDTOForGPU image)
 
 	__shared__ float cdf[TABLE_SIZE];
 
-	if (threadIdx.x == 0 && threadIdx.y == 0)
+	const int k = threadIdx.y * blockDim.x + threadIdx.x;
+	if (k < TABLE_SIZE)
 	{
 		uint32_t sum = 0;
-		for (int i = 0; i < TABLE_SIZE; ++i)
+		for (int i = 0; i <= k; ++i)
 		{
 			switch (blockIdx.z)
 			{
@@ -57,9 +58,9 @@ __global__ void EqualizePixels(ImageDTOForGPU image)
 				printf("Invalid input %d\n", blockIdx.z);
 				break;
 			}
-
-			cdf[i] = sum / (float)pixelCount;
 		}
+
+		cdf[k] = sum / (float)pixelCount;
 	}
 
 	__syncthreads();
@@ -214,58 +215,57 @@ __global__ void Match(ImageDTOForGPU outImage, ImageDTOForGPU srcImage, ImageDTO
 
 	__shared__ FrequencyTable lookup;
 
-	if (threadIdx.x == 0 && threadIdx.y == 0)
+	const int i = threadIdx.y * blockDim.x + threadIdx.x;
+
+	if (i < TABLE_SIZE)
 	{
-		for (int i = 0; i < TABLE_SIZE; ++i)
+		int k;
+		switch (blockIdx.z)
 		{
-			int k;
-			switch (blockIdx.z)
+		case EHandleColor::RED:
 			{
-			case EHandleColor::RED:
+				for (k = 0; k < TABLE_SIZE; ++k)
 				{
-					for (k = 0; k < TABLE_SIZE; ++k)
+					if (refImage.pFrequencyTable->redTable[k] > srcImage.pFrequencyTable->redTable[i])
 					{
-						if (refImage.pFrequencyTable->redTable[k] > srcImage.pFrequencyTable->redTable[i])
-						{
-							break;
-						}
+						break;
 					}
-
-					lookup.redTable[i] = k;
 				}
-				break;
 
-			case EHandleColor::GREEN:
-				{
-					for (k = 0; k < TABLE_SIZE; ++k)
-					{
-						if (refImage.pFrequencyTable->greenTable[k] > srcImage.pFrequencyTable->greenTable[i])
-						{
-							break;
-						}
-					}
-
-					lookup.greenTable[i] = k;
-				}
-				break;
-
-			case EHandleColor::BLUE:
-				{
-					for (k = 0; k < TABLE_SIZE; ++k)
-					{
-						if (refImage.pFrequencyTable->blueTable[k] > srcImage.pFrequencyTable->blueTable[i])
-						{
-							break;
-						}
-					}
-					lookup.blueTable[i] = k;
-				}
-				break;
-
-			default:
-				assert(false);
-				break;
+				lookup.redTable[i] = k;
 			}
+			break;
+
+		case EHandleColor::GREEN:
+			{
+				for (k = 0; k < TABLE_SIZE; ++k)
+				{
+					if (refImage.pFrequencyTable->greenTable[k] > srcImage.pFrequencyTable->greenTable[i])
+					{
+						break;
+					}
+				}
+
+				lookup.greenTable[i] = k;
+			}
+			break;
+
+		case EHandleColor::BLUE:
+			{
+				for (k = 0; k < TABLE_SIZE; ++k)
+				{
+					if (refImage.pFrequencyTable->blueTable[k] > srcImage.pFrequencyTable->blueTable[i])
+					{
+						break;
+					}
+				}
+				lookup.blueTable[i] = k;
+			}
+			break;
+
+		default:
+			assert(false);
+			break;
 		}
 	}
 
@@ -390,4 +390,85 @@ CUDA_FREE:;
 
 	cudaFree(outImageGPU.pPixels);
 	cudaFree(outImageGPU.pFrequencyTable);
+}
+
+__global__ void CorrectGamma(ImageDTOForGPU outImage, const float gamma)
+{
+	assert(outImage.pPixels != nullptr);
+
+	const unsigned int col = (blockDim.x * blockIdx.x) + threadIdx.x;
+	if (col >= outImage.width)
+	{
+		return;
+	}
+
+	const unsigned int row = (blockDim.y * blockIdx.y) + threadIdx.y;
+	if (row >= outImage.height)
+	{
+		return;
+	}
+
+	constexpr float NORMALIZER = 1 / 255.f;
+	constexpr float UNNORMALIZER = 255.f;
+
+	const unsigned int index = row * outImage.width + col;
+
+	Pixel* outPixel = outImage.pPixels + index;
+	switch (blockIdx.z)
+	{
+	case EHandleColor::RED:
+		float newR = powf(outPixel->rgba.r * NORMALIZER, gamma);
+		newR *= UNNORMALIZER;
+		outPixel->rgba.r = static_cast<uint8_t>(roundf(newR));
+		break;
+
+	case EHandleColor::GREEN:
+		float newG = powf(outPixel->rgba.g * NORMALIZER, gamma);
+		newG *= UNNORMALIZER;
+		outPixel->rgba.g = static_cast<uint8_t>(roundf(newG));
+		break;
+
+	case EHandleColor::BLUE:
+		float newB = powf(outPixel->rgba.b * NORMALIZER, gamma);
+		newB *= UNNORMALIZER;
+		outPixel->rgba.b = static_cast<uint8_t>(roundf(newB));
+		break;
+
+	default:
+		assert(false);
+		break;
+	}
+}
+
+void GammaHelperGPU(ImageDTOForGPU image, const float gamma)
+{
+	assert(image.pPixels != nullptr);
+	assert(image.pFrequencyTable != nullptr);
+
+	const int pixelCount = image.width * image.height;
+
+	ImageDTOForGPU imageGPU = { nullptr, image.width, image.height, nullptr };
+
+	cudaError_t errorCode = cudaMalloc(&(imageGPU.pPixels), sizeof(Pixel) * pixelCount);
+	if (errorCode != cudaSuccess)
+	{
+		printf("%s - %s\n", cudaGetErrorName(errorCode), cudaGetErrorString(errorCode));
+		goto CUDA_FREE;
+	}
+	{
+		dim3 blockDim = { 32, 32, 1 };
+		dim3 gridDim = {
+			(unsigned int)ceil(imageGPU.width / (float)blockDim.x),
+			(unsigned int)ceil(imageGPU.height / (float)blockDim.y),
+			EHandleColor::COUNT
+		};
+
+		cudaMemcpy(imageGPU.pPixels, image.pPixels, pixelCount * sizeof(Pixel), cudaMemcpyHostToDevice);
+		{
+			CorrectGamma << <gridDim, blockDim >> > (imageGPU, gamma);
+		}
+		cudaMemcpy(image.pPixels, imageGPU.pPixels, pixelCount * sizeof(Pixel), cudaMemcpyDeviceToHost);
+	}
+CUDA_FREE:;
+	cudaFree(imageGPU.pPixels);
 }

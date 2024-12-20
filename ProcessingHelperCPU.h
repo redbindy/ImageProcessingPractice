@@ -2,19 +2,11 @@
 
 #include <Windows.h>
 #include <vector>
+#include <thread>
 
 #include "Debug.h"
 #include "TypeDef.h"
 #include "Image.h"
 
 void EqualizeHelperCPU(Image& outImage);
-
-struct EqualizeArgs
-{
-	Pixel* pPixels;
-	const int pixelCount;
-	FrequencyTable* pFrequencyTable;
-	const EHandleColor color;
-};
-
-DWORD WINAPI EqualizeThread(void* pArgs);
+void GammaHelperCPU(Image& outImage, const float gamma);

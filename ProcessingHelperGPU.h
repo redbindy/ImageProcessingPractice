@@ -13,3 +13,5 @@ struct ImageDTOForGPU
 void EqualizeHelperGPU(ImageDTOForGPU image);
 
 void MatchHelperGPU(ImageDTOForGPU outImage, ImageDTOForGPU srcImage, ImageDTOForGPU refImage);
+
+void GammaHelperGPU(ImageDTOForGPU image, const float gamma);

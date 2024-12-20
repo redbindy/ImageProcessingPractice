@@ -89,6 +89,10 @@ void ImageProcessor::DrawImage(ID2D1HwndRenderTarget& renderTarget)
 			drawImageMatching(renderTarget);
 			break;
 
+		case EDrawMode::GAMMA:
+			drawImageGamma(renderTarget);
+			break;
+
 		default:
 			ASSERT(false);
 			break;
@@ -298,7 +302,7 @@ void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
 	std::vector<Pixel> backupPixels = mImage.Pixels;
 	FrequencyTable backupFreqTable = mImage.FrequencyTable;
 	{
-#if true /* SERIAL */
+#if false /* SERIAL */
 		ImageDTOForGPU srcImageDTO = {
 			mImage.Pixels.data(),
 			mImage.Width,
@@ -375,14 +379,13 @@ void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
 		mImage.FrequencyTable = image.FrequencyTable;
 #endif /* SERIAL */
 
-#if false /* CUDA */ // 만들긴 했는데 더 느림...
+#if true /* CUDA */
 		ImageDTOForGPU srcImageDTO = {
 			mImage.Pixels.data(),
 			mImage.Width,
 			mImage.Height,
 			&(mImage.FrequencyTable)
 		};
-
 
 		ImageDTOForGPU refImageDTO = {
 			image.Pixels.data(),
@@ -407,10 +410,85 @@ void ImageProcessor::drawImageGamma(ID2D1HwndRenderTarget& renderTarget)
 	{
 		constexpr float GAMMA = 2.5;
 
-		for (Pixel& pixel : mImage.Pixels)
-		{
+#if false /* SERIAL */
+		constexpr float NORMALIZING_SCALER = 1 / 255.f;
+		constexpr float UNNORMALIZING_SCALER = 255.f;
 
+		/*for (Pixel& p : mImage.Pixels)
+		{
+			p.rgba.r = static_cast<uint8_t>(round(pow(p.rgba.r * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
+			p.rgba.g = static_cast<uint8_t>(round(pow(p.rgba.g * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
+			p.rgba.b = static_cast<uint8_t>(round(pow(p.rgba.b * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
+		}*/
+
+		const __m256 normalizingScaler = _mm256_broadcast_ss(&NORMALIZING_SCALER);
+		const __m256 gammaVector = _mm256_broadcast_ss(&GAMMA);
+		const __m256 unnormalizingScaler = _mm256_broadcast_ss(&UNNORMALIZING_SCALER);
+
+		const __m256i zeroVector = _mm256_setzero_si256();
+		for (int i = 0; i < mImage.Pixels.size(); i += sizeof(__m256) / sizeof(Pixel))
+		{
+			__m256i pixelVector = _mm256_loadu_epi32(mImage.Pixels.data() + i);
+
+			__m256i vector16l = _mm256_unpacklo_epi8(pixelVector, zeroVector);
+			__m256i vector16h = _mm256_unpackhi_epi8(pixelVector, zeroVector);
+
+			__m256i vector32lh = _mm256_unpackhi_epi16(vector16l, zeroVector);
+			__m256i vector32ll = _mm256_unpacklo_epi16(vector16l, zeroVector);
+
+			__m256i vector32hl = _mm256_unpacklo_epi16(vector16h, zeroVector);
+			__m256i vector32hh = _mm256_unpackhi_epi16(vector16h, zeroVector);
+
+			__m256 fvec0 = _mm256_cvtepi32_ps(vector32ll);
+			__m256 fvec1 = _mm256_cvtepi32_ps(vector32lh);
+			__m256 fvec2 = _mm256_cvtepi32_ps(vector32hl);
+			__m256 fvec3 = _mm256_cvtepi32_ps(vector32hh);
+
+			fvec0 = _mm256_mul_ps(fvec0, normalizingScaler);
+			fvec1 = _mm256_mul_ps(fvec1, normalizingScaler);
+			fvec2 = _mm256_mul_ps(fvec2, normalizingScaler);
+			fvec3 = _mm256_mul_ps(fvec3, normalizingScaler);
+
+			fvec0 = powfAVX(fvec0, gammaVector);
+			fvec1 = powfAVX(fvec1, gammaVector);
+			fvec2 = powfAVX(fvec2, gammaVector);
+			fvec3 = powfAVX(fvec3, gammaVector);
+
+			fvec0 = _mm256_mul_ps(fvec0, unnormalizingScaler);
+			fvec1 = _mm256_mul_ps(fvec1, unnormalizingScaler);
+			fvec2 = _mm256_mul_ps(fvec2, unnormalizingScaler);
+			fvec3 = _mm256_mul_ps(fvec3, unnormalizingScaler);
+
+			vector32ll = _mm256_cvtps_epi32(fvec0);
+			vector32lh = _mm256_cvtps_epi32(fvec1);
+			vector32hl = _mm256_cvtps_epi32(fvec2);
+			vector32hh = _mm256_cvtps_epi32(fvec3);
+
+			vector16l = _mm256_packus_epi32(vector32ll, vector32lh);
+			vector16h = _mm256_packus_epi32(vector32hl, vector32hh);
+
+			__m256i scaledVector = _mm256_packus_epi16(vector16l, vector16h);
+
+			_mm256_storeu_epi8(mImage.Pixels.data() + i, scaledVector);
 		}
+#endif /* SERIAL */
+
+#if false /* 6 THREAD */
+		GammaHelperCPU(mImage, GAMMA);
+#endif /* 6 THREAD */
+
+#if true /* CUDA */
+		ImageDTOForGPU imageDTO = {
+			mImage.Pixels.data(),
+			mImage.Width,
+			mImage.Height,
+			&(mImage.FrequencyTable)
+		};
+
+		GammaHelperGPU(imageDTO, GAMMA);
+#endif /* CUDA */
+
+		drawImageDefault(renderTarget);
 	}
 	mImage.Pixels.swap(backupPixels);
 	mImage.FrequencyTable = backupFreqTable;
