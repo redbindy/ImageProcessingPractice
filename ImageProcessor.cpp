@@ -1,6 +1,7 @@
 #include "ImageProcessor.h"
 
 constexpr float DEFAULT_BRIGHTNESS_RATIO_F = 1.f;
+constexpr float DEFAULLT_GAMMA_SCALER_F = 1.f;
 
 ImageProcessor::ImageProcessor()
     : mOriginalImage()
@@ -8,6 +9,7 @@ ImageProcessor::ImageProcessor()
     , mNormalizedPixels(nullptr)
     , mResultImage()
     , mBrightnessRatio(DEFAULT_BRIGHTNESS_RATIO_F)
+    , mGammaScaler(DEFAULT_BRIGHTNESS_RATIO_F)
     , mFlags({ 0, })
     , mDirtyFlags({ 0, })
 {
@@ -158,6 +160,9 @@ void ImageProcessor::DrawControlPanel()
 
             ImGui::Text("Brightness");
             mDirtyFlags.partition.adjustment += ImGui::SliderFloat("[0, 2] * 100%", &mBrightnessRatio, 0, 2.f, "%.2f");
+
+            ImGui::Text("Gamma");
+            mDirtyFlags.partition.adjustment += ImGui::SliderFloat("[0.04, 25]", &mGammaScaler, 0.04f, 25.f, "%.3f");
         }
         ImGui::EndGroup();
     }
@@ -171,6 +176,7 @@ void ImageProcessor::restoreDefaultAdjustment()
     mDirtyFlags.flags = EUIConstant::NONE;
 
     mBrightnessRatio = DEFAULT_BRIGHTNESS_RATIO_F;
+    mGammaScaler = DEFAULT_BRIGHTNESS_RATIO_F;
 }
 
 void ImageProcessor::executeEqualization()
@@ -307,7 +313,9 @@ void ImageProcessor::modifyBrightness()
 
             for (int color = 0; color < COLOR_COUNT; ++color)
             {
-                pixel.subPixels[color] = clampNormalizedBrightness(pixel.subPixels[color] * mBrightnessRatio);
+                const float newIntensity = clampNormalizedBrightness(pixel.subPixels[color] * mBrightnessRatio);
+
+                pixel.subPixels[color] = powf(newIntensity, mGammaScaler);
             }
         }
     }

@@ -100,6 +100,7 @@ private:
     char mRefImagePath[EFileDialogConstant::DEFAULT_PATH_LEN];
 
     float mBrightnessRatio;
+    float mGammaScaler;
 
 private:
     void restoreDefaultAdjustment();
