@@ -1,43 +1,45 @@
 #pragma once
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <iostream>
 #include <Windows.h>
-#include <cassert>
+#include <tchar.h>
+
+enum EDebugConstant
+{
+    DEFAULT_BUFFER_SIZE = 1024
+};
 
 #if defined(_DEBUG) || defined(DEBUG)
 
 #define ASSERT_DEFAULT(expr) \
-	if (!(expr)) \
-	{ \
-		DebugBreak(); \
-	} \
+    if (!(expr))             \
+    {                        \
+        DebugBreak();        \
+        std::terminate();    \
+    }                        \
 
-#define ASSERT_WITH_MSG(expr, msg) \
-	if (!(expr)) \
-	{ \
-		PrintErrorMessage((msg), (-1)); \
-		DebugBreak(); \
-	} \
-
-#define ASSERT_WITH_MSG_AND_CODE(expr, msg, code) \
-	if (!(expr)) \
-	{ \
-		PrintErrorMessage((msg), (code)); \
-		DebugBreak(); \
-	} \
+#define ASSERT_WITH_MSG(expr, msg)       \
+    if (!(expr))                         \
+    {                                    \
+        std::cerr << (msg) << std::endl; \
+        DebugBreak();                    \
+        std::terminate();                \
+    }                                    \
 
 #define EXPAND(x) x
-#define VA_GENERIC(_1, _2, _3, x, ...) x
-#define ASSERT(...) EXPAND(VA_GENERIC(__VA_ARGS__, ASSERT_WITH_MSG_AND_CODE, ASSERT_WITH_MSG, ASSERT_DEFAULT)(__VA_ARGS__))
+#define VA_GENERIC(_1, _2, x, ...) x
+#define ASSERT(...) EXPAND(VA_GENERIC(__VA_ARGS__, ASSERT_WITH_MSG, ASSERT_DEFAULT)(__VA_ARGS__))
 
 #else
-
 #define ASSERT
-
 #endif
 
-inline void PrintErrorMessage(const char* msg, const HRESULT hr)
+void GetErrorDescription(const HRESULT hr, char* msgBuffer);
+
+inline void GetHResultDataFromWin32(HRESULT& outHResult, char* msgBuffer)
 {
-	std::cerr << msg << '\n'
-		<< std::showbase << std::hex << "Code: " << hr << std::endl;
+    outHResult = HRESULT_FROM_WIN32(GetLastError());
+    GetErrorDescription(outHResult, msgBuffer);
 }

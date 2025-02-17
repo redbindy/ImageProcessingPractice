@@ -1,17 +1,21 @@
+#if defined(_DEBUG) || defined(DEBUG)
+#pragma comment(linker, "/entry:wWinMainCRTStartup /subsystem:console")
+#endif
+
 #include <Windows.h>
 
 #include "App.h"
-#include "ProcessingHelperGPU.h"
 
-int main()
+#include "ImageProcessingHelperGPU.h"
+
+int WINAPI wWinMain(
+    _In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPTSTR pCmdLine,
+    _In_ int nCmdShow
+)
 {
-    App app;
+    App app(hInstance, nCmdShow);
 
-    int result = app.Initiallize();
-    if (result == S_OK)
-    {
-        app.Run();
-    }
-
-    return result;
+    return app.Run();
 }

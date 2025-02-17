@@ -1,495 +1,350 @@
 #include "ImageProcessor.h"
 
-ImageProcessor::ImageProcessor(const char* path)
-	: mImage(path)
-	, mDrawMode(EDrawMode::DEFAULT)
-{
+constexpr float DEFAULT_BRIGHTNESS_RATIO_F = 1.f;
 
+ImageProcessor::ImageProcessor()
+    : mOriginalImage()
+    , mBufferedImage()
+    , mNormalizedPixels(nullptr)
+    , mResultImage()
+    , mBrightnessRatio(DEFAULT_BRIGHTNESS_RATIO_F)
+    , mFlags({ 0, })
+    , mDirtyFlags({ 0, })
+{
+    ImPlot::CreateContext();
 }
 
-void ImageProcessor::SetDrawMode(const EDrawMode mode)
+ImageProcessor::~ImageProcessor()
 {
-	mDrawMode = mode;
+    ImPlot::DestroyContext();
+
+    delete[] mNormalizedPixels;
 }
 
-ID2D1Bitmap* ImageProcessor::createRenderedBitmapHeap(ID2D1HwndRenderTarget& renderTarget) const
+Image& ImageProcessor::GetProcessedImage()
 {
-	ID2D1Bitmap* pBitmap = nullptr;
-
-	const D2D1_SIZE_U size = {
-		static_cast<UINT32>(mImage.Width),
-		static_cast<UINT32>(mImage.Height)
-	};
-
-	const D2D1_PIXEL_FORMAT pixelFormat = D2D1::PixelFormat(
-		DXGI_FORMAT_R8G8B8A8_UNORM,
-		D2D1_ALPHA_MODE_IGNORE
-	);
-
-	const D2D1_BITMAP_PROPERTIES bitmapProperties = D2D1::BitmapProperties(pixelFormat);
-
-	const HRESULT hr = renderTarget.CreateBitmap(
-		size,
-		bitmapProperties,
-		&pBitmap
-	);
-	ASSERT(SUCCEEDED(hr), "CreateBitmap", hr);
-
-	D2D1_RECT_U box;
-	box.left = 0;
-	box.top = 0;
-	box.right = size.width;
-	box.bottom = size.height;
-
-	assert(pBitmap != nullptr);
-	pBitmap->CopyFromMemory(
-		&box,
-		mImage.Pixels.data(),
-		sizeof(Pixel) * size.width
-	);
-
-	return pBitmap;
+    return mResultImage;
 }
 
-D2D1_RECT_F ImageProcessor::getD2DRect(const HWND hWnd) const
+void ImageProcessor::Update()
 {
-	assert(hWnd != nullptr);
+    if (!mDirtyFlags.flags)
+    {
+        return;
+    }
 
-	RECT rect;
-	GetClientRect(hWnd, &rect);
+    if (mDirtyFlags.bits.restoring)
+    {
+        restoreDefaultAdjustment();
 
-	D2D1_RECT_F retRect;
-	retRect.left = static_cast<FLOAT>(rect.left);
-	retRect.top = static_cast<FLOAT>(rect.top);
-	retRect.right = static_cast<FLOAT>(rect.right);
-	retRect.bottom = static_cast<FLOAT>(rect.bottom);
+        return;
+    }
 
-	return retRect;
+    if (mDirtyFlags.partition.mode | mDirtyFlags.partition.histogramProcessing)
+    {
+        mBufferedImage = mOriginalImage;
+        if (mFlags.bits.grayScale)
+        {
+            convertToGrayScale(mBufferedImage);
+        }
+
+        switch (mFlags.flags & MASK_HISTOGRAM_PROCESSING)
+        {
+        case EUIConstant::HISTOGRAM_PROCESSING_EQUALIZATION:
+            executeEqualization();
+            break;
+
+        case EUIConstant::HISTOGRAM_PROCESSING_MATCHING:
+            executeHistogramMatching();
+            break;
+
+        default:
+            // no action
+            break;
+        }
+    }
+
+    ProcessingFunc processingFuncs[] = {
+        &ImageProcessor::normalize,
+        &ImageProcessor::modifyBrightness,
+        &ImageProcessor::storeResult
+    };
+
+    for (int i = 0; i < sizeof(processingFuncs) / sizeof(ProcessingFunc); ++i)
+    {
+        (this->*processingFuncs[i])();
+    }
+
+    mDirtyFlags.flags = EUIConstant::NONE;
 }
 
-void ImageProcessor::DrawImage(ID2D1HwndRenderTarget& renderTarget)
+void ImageProcessor::RegisterImage(Image&& other)
 {
-	clock_t start = clock();
-	{
-		switch (mDrawMode)
-		{
-		case EDrawMode::DEFAULT:
-			drawImageDefault(renderTarget);
-			break;
+    mOriginalImage = std::move(other);
+    mBufferedImage = mOriginalImage;
 
-		case EDrawMode::HISTOGRAM:
-			drawImageHistogram(renderTarget);
-			break;
+    delete[] mNormalizedPixels;
 
-		case EDrawMode::EQUALIZATION:
-			drawImageEqualization(renderTarget);
-			break;
+    mNormalizedPixels = new PixelF[mOriginalImage.Width * mOriginalImage.Height];
 
-		case EDrawMode::MATCHING:
-			drawImageMatching(renderTarget);
-			break;
+    const UIFlags tmpFlags = mFlags;
+    mFlags.flags = EUIConstant::NONE;
+    mFlags.partition.hardwareAcceleration = tmpFlags.partition.hardwareAcceleration;
 
-		case EDrawMode::GAMMA:
-			drawImageGamma(renderTarget);
-			break;
-
-		default:
-			ASSERT(false);
-			break;
-		}
-	}
-	clock_t end = clock();
-	std::cout << (end - start) / double(CLOCKS_PER_SEC) << std::endl;
+    restoreDefaultAdjustment();
 }
 
-void ImageProcessor::drawImageDefault(ID2D1HwndRenderTarget& renderTarget) const
+void ImageProcessor::DrawControlPanel()
 {
-	ID2D1Bitmap* pBitmap = createRenderedBitmapHeap(renderTarget);
-	{
-		const D2D1_RECT_F imageRect = getD2DRect(renderTarget.GetHwnd());
+    ImGui::Begin("Control Panel");
+    {
+        if (ImPlot::BeginPlot("Histogram"))
+        {
+            const Histogram hist = mResultImage.GetHistogram();
 
-		renderTarget.DrawBitmap(pBitmap, imageRect);
-	}
-	pBitmap->Release();
+            ImPlot::SetupAxes("Brightness", "Frequency", 0, ImPlotAxisFlags_AutoFit);
+
+            ImPlot::SetNextFillStyle(ImColor(UINT8_MAX, 0, 0, UINT8_MAX));
+            ImPlot::PlotBars("Red", hist.rgbTable.redFrequencyTable, TABLE_SIZE);
+
+            ImPlot::SetNextFillStyle(ImColor(0, UINT8_MAX, 0, UINT8_MAX));
+            ImPlot::PlotBars("Green", hist.rgbTable.greenFrequencyTable, TABLE_SIZE);
+
+            ImPlot::SetNextFillStyle(ImColor(0, 0, UINT8_MAX, UINT8_MAX));
+            ImPlot::PlotBars("Blue", hist.rgbTable.blueFrequencyTable, TABLE_SIZE);
+
+            ImPlot::EndPlot();
+        }
+
+        ImGui::SeparatorText("Hardware Acceleration");
+        ImGui::BeginGroup();
+        {
+            ImGui::CheckboxFlags("SIMD", &mFlags.flags, EUIConstant::HW_SIMD);
+            ImGui::SameLine();
+            ImGui::CheckboxFlags("CUDA", &mFlags.flags, EUIConstant::HW_CUDA);
+        }
+        ImGui::EndGroup();
+
+        ImGui::SeparatorText("Mode");
+        ImGui::BeginGroup();
+        {
+            mDirtyFlags.partition.mode = ImGui::CheckboxFlags("GrayScale", &mFlags.flags, EUIConstant::MODE_GRAY_SCALE);
+        }
+        ImGui::EndGroup();
+
+        ImGui::SeparatorText("Histogram Processing");
+        ImGui::BeginGroup();
+        {
+            UIFlags nextFlags = mFlags;
+            nextFlags.bits.equalization = false;
+            nextFlags.bits.matching = false;
+
+            mDirtyFlags.partition.histogramProcessing += ImGui::RadioButton("None", reinterpret_cast<int*>(&mFlags), nextFlags.flags);
+            ImGui::SameLine();
+
+            nextFlags.bits.equalization = true;
+            mDirtyFlags.partition.histogramProcessing += ImGui::RadioButton("Equalization", reinterpret_cast<int*>(&mFlags), nextFlags.flags);
+
+            nextFlags.bits.equalization = false;
+            nextFlags.bits.matching = true;
+            mDirtyFlags.partition.histogramProcessing += ImGui::RadioButton("Macthing(Choose image to match if dialogbox open)", reinterpret_cast<int*>(&mFlags), nextFlags.flags);
+        }
+        ImGui::EndGroup();
+
+        ImGui::SeparatorText("Adjustment");
+        ImGui::BeginGroup();
+        {
+            mDirtyFlags.partition.restoring = ImGui::Button("Restore Defaults");
+
+            ImGui::Text("Brightness");
+            mDirtyFlags.partition.adjustment += ImGui::SliderFloat("[0, 2] * 100%", &mBrightnessRatio, 0, 2.f, "%.2f");
+        }
+        ImGui::EndGroup();
+    }
+    ImGui::End();
 }
 
-
-void ImageProcessor::drawImageHistogram(ID2D1HwndRenderTarget& renderTarget) const
+void ImageProcessor::restoreDefaultAdjustment()
 {
-	ID2D1Bitmap* pBitmap = createRenderedBitmapHeap(renderTarget);
-	{
-		D2D1_RECT_F imageRect = getD2DRect(renderTarget.GetHwnd());
-		imageRect.right *= 0.5f;
+    mResultImage = mBufferedImage;
 
-		renderTarget.DrawBitmap(pBitmap, &imageRect);
+    mDirtyFlags.flags = EUIConstant::NONE;
 
-		ID2D1SolidColorBrush* pRedBrush = nullptr;
-		renderTarget.CreateSolidColorBrush(
-			D2D1::ColorF(D2D1::ColorF::Red),
-			&pRedBrush
-		);
-
-		ID2D1SolidColorBrush* pGreenBrush = nullptr;
-		renderTarget.CreateSolidColorBrush(
-			D2D1::ColorF(D2D1::ColorF::Green),
-			&pGreenBrush
-		);
-
-		ID2D1SolidColorBrush* pBlueBrush = nullptr;
-		renderTarget.CreateSolidColorBrush(
-			D2D1::ColorF(D2D1::ColorF::Blue),
-			&pBlueBrush
-		);
-		{
-			assert(pRedBrush != nullptr);
-			assert(pGreenBrush != nullptr);
-			assert(pBlueBrush != nullptr);
-
-			uint32_t maxFreq = 0;
-
-			for (int i = 0; i < TABLE_SIZE; ++i)
-			{
-				const uint32_t r = mImage.FrequencyTable.redTable[i];
-				if (r > maxFreq)
-				{
-					maxFreq = r;
-				}
-
-				const uint32_t g = mImage.FrequencyTable.greenTable[i];
-				if (g > maxFreq)
-				{
-					maxFreq = g;
-				}
-
-				const uint32_t b = mImage.FrequencyTable.blueTable[i];
-				if (b > maxFreq)
-				{
-					maxFreq = b;
-				}
-			}
-
-			const float gap = imageRect.right / (TABLE_SIZE + 1);
-			const float histHeight = imageRect.bottom * 0.33f;
-
-			const float redBottom = imageRect.bottom;
-			const float greenBottom = imageRect.bottom * 0.67f;
-			const float blueBottom = imageRect.bottom * 0.33f;
-
-			float x = imageRect.right + gap;
-			for (int i = 0; i < TABLE_SIZE; ++i)
-			{
-				D2D1_POINT_2F redTailPoint = { x, redBottom };
-
-				const float red = RemapValue(
-					static_cast<float>(mImage.FrequencyTable.redTable[i]),
-					0, static_cast<float>(maxFreq),
-					0, static_cast<float>(histHeight)
-				);
-				D2D1_POINT_2F redHeadPoint = { x, redBottom - red };
-
-				renderTarget.DrawLine(
-					redTailPoint,
-					redHeadPoint,
-					pRedBrush
-				);
-
-				D2D1_POINT_2F greenTailPoint = { x, greenBottom };
-
-				const float green = RemapValue(
-					static_cast<float>(mImage.FrequencyTable.greenTable[i]),
-					0, static_cast<float>(maxFreq),
-					0, static_cast<float>(histHeight)
-				);
-				D2D1_POINT_2F greenHeadPoint = { x, greenBottom - green };
-
-				renderTarget.DrawLine(
-					greenTailPoint,
-					greenHeadPoint,
-					pGreenBrush
-				);
-
-				D2D1_POINT_2F blueTailPoint = { x, blueBottom };
-
-				const float blue = RemapValue(
-					static_cast<float>(mImage.FrequencyTable.blueTable[i]),
-					0, static_cast<float>(maxFreq),
-					0, static_cast<float>(histHeight)
-				);
-				D2D1_POINT_2F blueHeadPoint = { x, blueBottom - blue };
-
-				renderTarget.DrawLine(
-					blueTailPoint,
-					blueHeadPoint,
-					pBlueBrush
-				);
-
-				x += gap;
-			}
-		}
-		pBlueBrush->Release();
-		pGreenBrush->Release();
-		pRedBrush->Release();
-	}
-	pBitmap->Release();
+    mBrightnessRatio = DEFAULT_BRIGHTNESS_RATIO_F;
 }
 
-void ImageProcessor::drawImageEqualization(ID2D1HwndRenderTarget& renderTarget)
+void ImageProcessor::executeEqualization()
 {
-	std::vector<Pixel> backupPixels = mImage.Pixels;
-	FrequencyTable backupFreqTable = mImage.FrequencyTable;
-	{
-#if false /* SERIAL */
-		float redCDF[TABLE_SIZE];
-		float greenCDF[TABLE_SIZE];
-		float blueCDF[TABLE_SIZE];
+    Histogram hist = mBufferedImage.GetHistogram();
 
-		uint32_t redSum = 0;
-		uint32_t greenSum = 0;
-		uint32_t blueSum = 0;
-		for (int i = 0; i < TABLE_SIZE; ++i)
-		{
-			redSum += mFrequencyTable.redTable[i];
-			redCDF[i] = redSum / static_cast<float>(mImageWidth * mImageHeight);
+    const int pixelCount = mBufferedImage.Width * mBufferedImage.Height;
 
-			greenSum += mFrequencyTable.greenTable[i];
-			greenCDF[i] = greenSum / static_cast<float>(mImageWidth * mImageHeight);
+    if (mFlags.bits.cuda)
+    {
 
-			blueSum += mFrequencyTable.blueTable[i];
-			blueCDF[i] = blueSum / static_cast<float>(mImageWidth * mImageHeight);
-		}
+    }
+    else
+    {
+        equalizeHistogram(hist, pixelCount);
 
-		memset(&mFrequencyTable, 0, sizeof(mFrequencyTable));
-
-		for (Pixel& pixel : mPixels)
-		{
-			pixel.rgba.r = static_cast<uint8_t>(round(UINT8_MAX * redCDF[pixel.rgba.r]));
-			++mFrequencyTable.redTable[pixel.rgba.r];
-
-			pixel.rgba.g = static_cast<uint8_t>(round(UINT8_MAX * greenCDF[pixel.rgba.g]));
-			++mFrequencyTable.greenTable[pixel.rgba.g];
-
-			pixel.rgba.b = static_cast<uint8_t>(round(UINT8_MAX * blueCDF[pixel.rgba.b]));
-			++mFrequencyTable.blueTable[pixel.rgba.b];
-		}
-#endif /* SERIAL */
-
-#if false /* 3 THREAD */
-		EqualizeHelperCPU(mPixels, mFrequencyTable);
-#endif /* 3 THREAD */
-
-#if true /* CUDA */
-
-		ImageDTOForGPU imageDTO = {
-			mImage.Pixels.data(),
-			mImage.Width,
-			mImage.Height,
-			&(mImage.FrequencyTable)
-		};
-
-		EqualizeHelperGPU(imageDTO);
-#endif /* CUDA */
-
-		drawImageHistogram(renderTarget);
-	}
-	mImage.FrequencyTable = backupFreqTable;
-	backupPixels.swap(mImage.Pixels);
+        for (int i = 0; i < pixelCount; ++i)
+        {
+            Pixel& pixel = mBufferedImage.pRawPixels[i];
+            for (int color = 0; color < COLOR_COUNT; ++color)
+            {
+                pixel.subPixels[color] = hist.frequencyTables[color][pixel.subPixels[color]];
+            }
+        }
+    }
 }
 
-void ImageProcessor::drawImageMatching(ID2D1HwndRenderTarget& renderTarget)
+void ImageProcessor::equalizeHistogram(Histogram& outHistogram, const int pixelCount)
 {
-	Image image("xenoblade2-01.jpg");
+    uint32_t cumulativeSum[COLOR_COUNT] = { 0, };
+    for (int i = 0; i <= MAX_BRIGHTNESS; ++i)
+    {
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            cumulativeSum[color] += outHistogram.frequencyTables[color][i];
 
-	std::vector<Pixel> backupPixels = mImage.Pixels;
-	FrequencyTable backupFreqTable = mImage.FrequencyTable;
-	{
-#if false /* SERIAL */
-		ImageDTOForGPU srcImageDTO = {
-			mImage.Pixels.data(),
-			mImage.Width,
-			mImage.Height,
-			&(mImage.FrequencyTable)
-		};
+            const float newIntensity = roundf(MAX_BRIGHTNESS_F * cumulativeSum[color] / pixelCount);
 
-		EqualizeHelperGPU(srcImageDTO);
-
-		ImageDTOForGPU refImageDTO = {
-			image.Pixels.data(),
-			image.Width,
-			image.Height,
-			&(image.FrequencyTable)
-		};
-
-		EqualizeHelperGPU(refImageDTO);
-
-		FrequencyTable lookup = { 0, };
-		for (int i = 0; i < TABLE_SIZE; ++i)
-		{
-			int k;
-			for (k = 0; k < TABLE_SIZE; ++k)
-			{
-				if (image.FrequencyTable.redTable[k] > mImage.FrequencyTable.redTable[i])
-				{
-					break;
-				}
-			}
-
-			lookup.redTable[i] = k;
-
-			for (k = 0; k < TABLE_SIZE; ++k)
-			{
-				if (image.FrequencyTable.greenTable[k] > mImage.FrequencyTable.greenTable[i])
-				{
-					break;
-				}
-			}
-
-			lookup.greenTable[i] = k;
-
-			for (k = 0; k < TABLE_SIZE; ++k)
-			{
-				if (image.FrequencyTable.blueTable[k] > mImage.FrequencyTable.blueTable[i])
-				{
-					break;
-				}
-			}
-
-			lookup.blueTable[i] = k;
-		}
-
-		image.Pixels.clear();
-		memset(&(image.FrequencyTable), 0, sizeof(FrequencyTable));
-		for (int i = 0; i < mImage.Pixels.size(); ++i)
-		{
-			Pixel newPixel;
-			newPixel.rgba.r = lookup.redTable[mImage.Pixels[i].rgba.r];
-			++image.FrequencyTable.redTable[newPixel.rgba.r];
-
-			newPixel.rgba.g = lookup.greenTable[mImage.Pixels[i].rgba.g];
-			++image.FrequencyTable.greenTable[newPixel.rgba.g];
-
-			newPixel.rgba.b = lookup.blueTable[mImage.Pixels[i].rgba.b];
-			++image.FrequencyTable.blueTable[newPixel.rgba.b];
-
-			newPixel.rgba.a = UINT8_MAX;
-
-			image.Pixels.push_back(newPixel);
-		}
-
-		mImage.Pixels.swap(image.Pixels);
-		mImage.FrequencyTable = image.FrequencyTable;
-#endif /* SERIAL */
-
-#if true /* CUDA */
-		ImageDTOForGPU srcImageDTO = {
-			mImage.Pixels.data(),
-			mImage.Width,
-			mImage.Height,
-			&(mImage.FrequencyTable)
-		};
-
-		ImageDTOForGPU refImageDTO = {
-			image.Pixels.data(),
-			image.Width,
-			image.Height,
-			&(image.FrequencyTable)
-		};
-
-		MatchHelperGPU(srcImageDTO, srcImageDTO, refImageDTO);
-#endif /* CUDA */
-
-		drawImageHistogram(renderTarget);
-	}
-	mImage.Pixels.swap(backupPixels);
-	mImage.FrequencyTable = backupFreqTable;
+            outHistogram.frequencyTables[color][i] = static_cast<uint8_t>(newIntensity);
+        }
+    }
 }
 
-void ImageProcessor::drawImageGamma(ID2D1HwndRenderTarget& renderTarget)
+void ImageProcessor::executeHistogramMatching()
 {
-	std::vector<Pixel> backupPixels = mImage.Pixels;
-	FrequencyTable backupFreqTable = mImage.FrequencyTable;
-	{
-		constexpr float GAMMA = 2.5;
+    if (mDirtyFlags.partition.histogramProcessing)
+    {
+        FileDialog& fileDialog = *FileDialog::GetInstance();
+        if (!fileDialog.TryOpenFileDialog(mRefImagePath, EFileDialogConstant::DEFAULT_PATH_LEN))
+        {
+            mDirtyFlags.partition.histogramProcessing = true;
+            mFlags.partition.histogramProcessing = false;
 
-#if false /* SERIAL */
-		constexpr float NORMALIZING_SCALER = 1 / 255.f;
-		constexpr float UNNORMALIZING_SCALER = 255.f;
+            return;
+        }
+    }
 
-		/*for (Pixel& p : mImage.Pixels)
-		{
-			p.rgba.r = static_cast<uint8_t>(round(pow(p.rgba.r * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
-			p.rgba.g = static_cast<uint8_t>(round(pow(p.rgba.g * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
-			p.rgba.b = static_cast<uint8_t>(round(pow(p.rgba.b * NORMALIZING_SCALER, GAMMA) * UNNORMALIZING_SCALER));
-		}*/
+    Image refImage(mRefImagePath);
+    if (mFlags.bits.grayScale)
+    {
+        convertToGrayScale(refImage);
+    }
 
-		const __m256 normalizingScaler = _mm256_broadcast_ss(&NORMALIZING_SCALER);
-		const __m256 gammaVector = _mm256_broadcast_ss(&GAMMA);
-		const __m256 unnormalizingScaler = _mm256_broadcast_ss(&UNNORMALIZING_SCALER);
+    Histogram refEqualizedHist = refImage.GetHistogram();
 
-		const __m256i zeroVector = _mm256_setzero_si256();
-		for (int i = 0; i < mImage.Pixels.size(); i += sizeof(__m256) / sizeof(Pixel))
-		{
-			__m256i pixelVector = _mm256_loadu_epi32(mImage.Pixels.data() + i);
+    equalizeHistogram(refEqualizedHist, refImage.Width * refImage.Height);
 
-			__m256i vector16l = _mm256_unpacklo_epi8(pixelVector, zeroVector);
-			__m256i vector16h = _mm256_unpackhi_epi8(pixelVector, zeroVector);
+    const int pixelCount = mBufferedImage.Width * mBufferedImage.Height;
 
-			__m256i vector32lh = _mm256_unpackhi_epi16(vector16l, zeroVector);
-			__m256i vector32ll = _mm256_unpacklo_epi16(vector16l, zeroVector);
+    Histogram equalizedHist = mBufferedImage.GetHistogram();
+    equalizeHistogram(equalizedHist, pixelCount);
 
-			__m256i vector32hl = _mm256_unpacklo_epi16(vector16h, zeroVector);
-			__m256i vector32hh = _mm256_unpackhi_epi16(vector16h, zeroVector);
+    Histogram inverseLookup = { 0, };
+    for (int i = 0; i <= MAX_BRIGHTNESS; ++i)
+    {
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            int k = MAX_BRIGHTNESS;
+            while (refEqualizedHist.frequencyTables[color][k] > equalizedHist.frequencyTables[color][i])
+            {
+                --k;
+            }
 
-			__m256 fvec0 = _mm256_cvtepi32_ps(vector32ll);
-			__m256 fvec1 = _mm256_cvtepi32_ps(vector32lh);
-			__m256 fvec2 = _mm256_cvtepi32_ps(vector32hl);
-			__m256 fvec3 = _mm256_cvtepi32_ps(vector32hh);
+            if (k < 0)
+            {
+                inverseLookup.frequencyTables[color][i] = 0;
+            }
+            else
+            {
+                inverseLookup.frequencyTables[color][i] = k;
+            }
+        }
+    }
 
-			fvec0 = _mm256_mul_ps(fvec0, normalizingScaler);
-			fvec1 = _mm256_mul_ps(fvec1, normalizingScaler);
-			fvec2 = _mm256_mul_ps(fvec2, normalizingScaler);
-			fvec3 = _mm256_mul_ps(fvec3, normalizingScaler);
+    for (int i = 0; i < pixelCount; ++i)
+    {
+        Pixel& pixel = mBufferedImage.pRawPixels[i];
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            pixel.subPixels[color] = inverseLookup.frequencyTables[color][pixel.subPixels[color]];
+        }
+    }
+}
 
-			fvec0 = powfAVX(fvec0, gammaVector);
-			fvec1 = powfAVX(fvec1, gammaVector);
-			fvec2 = powfAVX(fvec2, gammaVector);
-			fvec3 = powfAVX(fvec3, gammaVector);
+void ImageProcessor::normalize()
+{
+    for (int i = 0; i < mBufferedImage.Width * mBufferedImage.Height; ++i)
+    {
+        const Pixel& pixel = mBufferedImage.pRawPixels[i];
 
-			fvec0 = _mm256_mul_ps(fvec0, unnormalizingScaler);
-			fvec1 = _mm256_mul_ps(fvec1, unnormalizingScaler);
-			fvec2 = _mm256_mul_ps(fvec2, unnormalizingScaler);
-			fvec3 = _mm256_mul_ps(fvec3, unnormalizingScaler);
+        PixelF& normalizedPixel = mNormalizedPixels[i];
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            normalizedPixel.subPixels[color] = pixel.subPixels[color] * NORMALIZER_F;
+        }
+    }
+}
 
-			vector32ll = _mm256_cvtps_epi32(fvec0);
-			vector32lh = _mm256_cvtps_epi32(fvec1);
-			vector32hl = _mm256_cvtps_epi32(fvec2);
-			vector32hh = _mm256_cvtps_epi32(fvec3);
+void ImageProcessor::modifyBrightness()
+{
+    if (mFlags.bits.cuda)
+    {
 
-			vector16l = _mm256_packus_epi32(vector32ll, vector32lh);
-			vector16h = _mm256_packus_epi32(vector32hl, vector32hh);
+    }
+    else if (mFlags.bits.simd)
+    {
 
-			__m256i scaledVector = _mm256_packus_epi16(vector16l, vector16h);
+    }
+    else
+    {
+        for (int i = 0; i < mBufferedImage.Width * mBufferedImage.Height; ++i)
+        {
+            PixelF& pixel = mNormalizedPixels[i];
 
-			_mm256_storeu_epi8(mImage.Pixels.data() + i, scaledVector);
-		}
-#endif /* SERIAL */
+            for (int color = 0; color < COLOR_COUNT; ++color)
+            {
+                pixel.subPixels[color] = clampNormalizedBrightness(pixel.subPixels[color] * mBrightnessRatio);
+            }
+        }
+    }
+}
 
-#if false /* 6 THREAD */
-		GammaHelperCPU(mImage, GAMMA);
-#endif /* 6 THREAD */
+void ImageProcessor::storeResult()
+{
+    for (int i = 0; i < mBufferedImage.Width * mBufferedImage.Height; ++i)
+    {
+        const PixelF& pixel = mNormalizedPixels[i];
 
-#if true /* CUDA */
-		ImageDTOForGPU imageDTO = {
-			mImage.Pixels.data(),
-			mImage.Width,
-			mImage.Height,
-			&(mImage.FrequencyTable)
-		};
+        Pixel& resultPixel = mResultImage.pRawPixels[i];
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            resultPixel.subPixels[color] = static_cast<uint8_t>(pixel.subPixels[color] * UNNORMALIZER_F);
+        }
+    }
+}
 
-		GammaHelperGPU(imageDTO, GAMMA);
-#endif /* CUDA */
+void ImageProcessor::convertToGrayScale(Image& outImage)
+{
+    if (outImage.ChannelCount <= 2)
+    {
+        return;
+    }
 
-		drawImageDefault(renderTarget);
-	}
-	mImage.Pixels.swap(backupPixels);
-	mImage.FrequencyTable = backupFreqTable;
+    for (int i = 0; i < outImage.Width * outImage.Height; ++i)
+    {
+        Pixel& pixel = outImage.pRawPixels[i];
+
+        // luma coding
+        const float newIntensity = clampBrightness(pixel.rgba.r * 0.299f + pixel.rgba.g * 0.587f + pixel.rgba.b * 0.114f);
+        const uint8_t grayBrightness = static_cast<uint8_t>(newIntensity);
+
+        for (int color = 0; color < COLOR_COUNT; ++color)
+        {
+            pixel.subPixels[color] = grayBrightness;
+        }
+    }
 }
